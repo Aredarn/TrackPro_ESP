@@ -3,7 +3,7 @@ This project demonstrates how to use an ESP8266 to act as a GPS data server. The
 Features:
 
     - GPS Data Collection: Captures latitude, longitude, altitude, speed, number of satellites, and timestamp using the TinyGPS++ library.
-    - WebSocket Communication: Streams real-time GPS data to all connected clients via WebSocket on port 81.
+    - TCP Communication: Streams real-time GPS data to to a device with port 4201
     - AP Mode: ESP8266 hosts its own Wi-Fi network for easy client connection.
 
 Setup
