@@ -1,12 +1,15 @@
 #include <ESP8266WiFi.h>
 #include <TinyGPS++.h>
 #include <SoftwareSerial.h>
-
+#include <Wire.h> 
+#include "SSD1306Wire.h"   
 #define GPSBaud 9600
 
 // GPS and SoftwareSerial objects
 TinyGPSPlus gps;
 SoftwareSerial gpsSerial(4, 5);  // RX, TX
+SSD1306Wire display(0x3c, 14, 12);
+
 
 // Wi-Fi credentials for AP mode
 const char *ssid = "ESP8266";
@@ -22,7 +25,12 @@ bool gpsConnected = false;         // Flag for GPS connection
 
 void setup() {
   Serial.begin(115200);
+  
   gpsSerial.begin(GPSBaud);
+
+  display.init();
+  display.flipScreenVertically();
+  display.setFont(ArialMT_Plain_10);
 
   // Configure ESP8266 as an Access Point
   IPAddress local_IP(192, 168, 4, 1);
@@ -41,13 +49,33 @@ void setup() {
 
   // Start TCP server
   tcpServer.begin();
-  Serial.println("TCP server started on 192.168.4.1:4210");
+
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(20, 20, "TCP server started");
+  Serial.println("TCP server started.");
+  delay(2000);
 }
 
 void loop() {
-  // Check if any client is connected
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+
+  // The coordinates define the left starting point of the text
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(20, 20, "Waiting for client"); 
+  display.display();
   WiFiClient client = tcpServer.available();
   if (client) {
+
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+
+  // The coordinates define the left starting point of the text
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(20, 20, "Client connected"); 
+  display.display();
+
     Serial.println("Client connected");
     while (client.connected()) {
       // Process GPS data
