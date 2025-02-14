@@ -19,7 +19,7 @@ const char *password = "yourpasswordhere";
 WiFiServer tcpServer(4210);
 
 // Variables to store GPS data
-String lastGpsData = "";
+String lastTimestamp = "";  // Store the last timestamp sent
 unsigned long lastUpdateTime = 0;  // For timing updates
 bool gpsConnected = false;         // Flag for GPS connection
 
@@ -76,23 +76,31 @@ void loop() {
   display.drawString(20, 20, "Client connected"); 
   display.display();
 
-    Serial.println("Client connected");
-    while (client.connected()) {
-      // Process GPS data
-      gpsConnected = false;
-      while (gpsSerial.available() > 0) {
-        gps.encode(gpsSerial.read());
-        gpsConnected = true;
-        if (gps.location.isUpdated()) {
-          sendGpsUpdate(client);
-        }
-      }
+  Serial.println("Client connected");
 
-      // Send dummy data if GPS is not connected
-      if (!gpsConnected) {
-        sendDummyData(client);
-      }
+
+  while (client.connected()) {
+  gpsConnected = false;
+    
+  while (gpsSerial.available() > 0) {
+      gps.encode(gpsSerial.read());
+      gpsConnected = true; // Mark GPS as connected
+  }
+
+    if (gps.location.isUpdated()) {
+        String currentTimestamp = String(gps.time.hour()) + ":" + 
+                                  String(gps.time.minute()) + ":" + 
+                                  String(gps.time.second()) + "." + 
+                                  String(gps.time.centisecond());
+
+        if (currentTimestamp != lastTimestamp && millis() - lastUpdateTime >= 40) {
+            lastUpdateTime = millis();
+            lastTimestamp = currentTimestamp;
+            sendGpsUpdate(client);
+        }
     }
+}
+
     // Client disconnected
     Serial.println("Client disconnected");
     client.stop();
@@ -101,27 +109,28 @@ void loop() {
 
 void sendGpsUpdate(WiFiClient &client) {
   String currentGpsData = createGpsJson();
-
-  // Avoid sending the same data repeatedly
-  if (currentGpsData != lastGpsData) {
-    lastGpsData = currentGpsData;
-    client.println(currentGpsData);  // Send to the connected client
+    client.println(currentGpsData);
     Serial.println("GPS Update Sent: " + currentGpsData);
   }
-}
 
 String createGpsJson() {
-  // Create JSON-formatted GPS data
-  String json = "{";
-  json += "\"latitude\": " + String(gps.location.isValid() ? gps.location.lat() : 0, 6) + ",";
-  json += "\"longitude\": " + String(gps.location.isValid() ? gps.location.lng() : 0, 6) + ",";
-  json += "\"altitude\": " + String(gps.altitude.isValid() ? gps.altitude.meters() : 0) + ",";
-  json += "\"speed\": " + String(gps.speed.isValid() ? gps.speed.kmph() : 0) + ",";
-  json += "\"satellites\": " + String(gps.satellites.isValid() ? gps.satellites.value() : 0) + ",";
-  json += "\"timestamp\": \"" + String(gps.time.isValid() ? gps.time.hour() : 0) + ":" + String(gps.time.minute()) + ":" + String(gps.time.second()) + "\"";
-  json += "}";
-  return json;
+    char jsonBuffer[128]; // Allocate buffer for JSON string
+
+    snprintf(jsonBuffer, sizeof(jsonBuffer),
+        "{\"latitude\": %.6f, \"longitude\": %.6f, \"altitude\": %.2f, \"speed\": %.2f, \"satellites\": %d, \"timestamp\": \"%02d:%02d:%02d\"}",
+        gps.location.isValid() ? gps.location.lat() : 0.0,
+        gps.location.isValid() ? gps.location.lng() : 0.0,
+        gps.altitude.isValid() ? gps.altitude.meters() : 0.0,
+        gps.speed.isValid() ? gps.speed.kmph() : 0.0,
+        gps.satellites.isValid() ? gps.satellites.value() : 0,
+        gps.time.isValid() ? gps.time.hour() : 0,
+        gps.time.isValid() ? gps.time.minute() : 0,
+        gps.time.isValid() ? gps.time.second() : 0
+    );
+
+    return String(jsonBuffer);
 }
+
 
 void sendDummyData(WiFiClient &client) {
   String dummyData = "{";
@@ -134,9 +143,10 @@ void sendDummyData(WiFiClient &client) {
   dummyData += "}";
   delay(500);
 
+/*
   if (dummyData != lastGpsData) {
     lastGpsData = dummyData;
     client.println(dummyData);  // Send to the connected client
     Serial.println("Dummy Data Sent: " + dummyData);
-  }
+  }*/
 }
