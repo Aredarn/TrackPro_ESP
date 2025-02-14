@@ -1,4 +1,4 @@
-This project demonstrates how to use an ESP8266 to act as a GPS data server. The device collects GPS data using a GPS module and streams it to connected clients over a WebSocket server. The ESP8266 operates in Access Point (AP) mode, allowing direct client connections without the need for an external Wi-Fi network.
+This project demonstrates how to use an ESP8266 to act as a GPS data server. The device collects GPS data using a GPS module (Mateksys m10q) and streams it to connected clients over a WebSocket server. The ESP8266 operates in Access Point (AP) mode, allowing direct client connections without the need for an external Wi-Fi network.
 
 Features:
 
