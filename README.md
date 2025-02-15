@@ -26,3 +26,9 @@ Setup
     Connect and Test:
         Connect to the Wi-Fi network named ESP8266 (default).
         Open a WebSocket client (e.g., a browser or WebSocket test tool) and connect to ws://192.168.4.1:81.
+
+
+Tested with:
+
+    No1:
+        ESp8266 OLED with GY-GPS6MV2 
