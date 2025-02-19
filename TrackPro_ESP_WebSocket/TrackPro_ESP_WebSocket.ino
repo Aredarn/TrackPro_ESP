@@ -10,6 +10,11 @@ TinyGPSPlus gps;
 SoftwareSerial gpsSerial(4, 5);  // RX, TX
 SSD1306Wire display(0x3c, 14, 12);
 
+void sendUBX(byte *MSG, uint8_t len) {
+  for (int i = 0; i < len; i++) {
+    gpsSerial.write(MSG[i]);
+  }
+}
 
 // Wi-Fi credentials for AP mode
 const char *ssid = "ESP8266";
@@ -25,8 +30,9 @@ bool gpsConnected = false;         // Flag for GPS connection
 
 void setup() {
   Serial.begin(115200);
-  
   gpsSerial.begin(GPSBaud);
+  byte set5Hz[] = {0xB5, 0x62, 0x06, 0x08, 0x06, 0x00, 0xE8, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x39};
+  sendUBX(set5Hz, sizeof(set5Hz));
 
   display.init();
   display.flipScreenVertically();
