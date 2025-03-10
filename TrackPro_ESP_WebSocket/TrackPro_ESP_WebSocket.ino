@@ -10,12 +10,24 @@ TinyGPSPlus gps;
 SoftwareSerial gpsSerial(4, 5);  // RX, TX
 SSD1306Wire display(0x3c, 14, 12);
 
-void sendUBX(byte *MSG, uint8_t len) {
-  for (int i = 0; i < len; i++) {
-    gpsSerial.write(MSG[i]);
-  }
+// Send UBX command
+void sendUBX(byte *msg, uint8_t len) {
+  byte ck[2];
+  calcChecksum(msg, len, ck);
+  gpsSerial.write(0xB5); // Header
+  gpsSerial.write(0x62); // Header
+  gpsSerial.write(msg, len);
+  gpsSerial.write(ck[0]);
+  gpsSerial.write(ck[1]);
 }
 
+void calcChecksum(byte *msg, uint8_t len, byte *ck) {
+  ck[0] = ck[1] = 0;
+  for (uint8_t i = 0; i < len; i++) {
+    ck[0] += msg[i];
+    ck[1] += ck[0];
+  }
+}
 // Wi-Fi credentials for AP mode
 const char *ssid = "ESP8266";
 const char *password = "yourpasswordhere";
@@ -31,8 +43,14 @@ bool gpsConnected = false;         // Flag for GPS connection
 void setup() {
   Serial.begin(115200);
   gpsSerial.begin(GPSBaud);
-  byte set5Hz[] = {0xB5, 0x62, 0x06, 0x08, 0x06, 0x00, 0xE8, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x39};
+  delay(2000); // Allow GPS module to initialize
+
+
+  byte set5Hz[] = {0x06, 0x08, 0x06, 0x00, 0xC8, 0x00, 0x01, 0x00, 0x01, 0x00};
   sendUBX(set5Hz, sizeof(set5Hz));
+
+  byte saveConfig[] = {0x06, 0x09, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  sendUBX(saveConfig, sizeof(saveConfig));
 
   display.init();
   display.flipScreenVertically();
