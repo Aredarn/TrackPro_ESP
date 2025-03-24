@@ -35,6 +35,7 @@ const char *password = "yourpasswordhere";
 // TCP server on port 4210
 WiFiServer tcpServer(4210);
 
+
 // Variables to store GPS data
 String lastTimestamp = "";  // Store the last timestamp sent
 unsigned long lastUpdateTime = 0;  // For timing updates
@@ -67,11 +68,13 @@ void setup() {
   }
 
   WiFi.softAP(ssid, password);
+  WiFi.setSleep(false);
   Serial.println("Access Point started");
   Serial.print("AP IP Address: ");
   Serial.println(WiFi.softAPIP());  // Should display 192.168.4.1
 
   // Start TCP server
+  tcpServer.setNoDelay(true);
   tcpServer.begin();
 
   display.setTextAlignment(TEXT_ALIGN_LEFT);
@@ -90,6 +93,7 @@ void loop() {
   display.drawString(20, 20, "Waiting for client"); 
   display.display();
   WiFiClient client = tcpServer.available();
+
   if (client) {
 
   display.clear();
@@ -103,27 +107,33 @@ void loop() {
   Serial.println("Client connected");
 
 
-  while (client.connected()) {
-  gpsConnected = false;
-    
-  while (gpsSerial.available() > 0) {
-      gps.encode(gpsSerial.read());
-      gpsConnected = true; // Mark GPS as connected
-  }
+  while (client.connected()) 
+  {
 
-    if (gps.location.isUpdated()) {
-        String currentTimestamp = String(gps.time.hour()) + ":" + 
-                                  String(gps.time.minute()) + ":" + 
-                                  String(gps.time.second()) + "." + 
-                                  String(gps.time.centisecond());
 
-        if (currentTimestamp != lastTimestamp && millis() - lastUpdateTime >= 40) {
-            lastUpdateTime = millis();
-            lastTimestamp = currentTimestamp;
-            sendGpsUpdate(client);
+
+      gpsConnected = false;
+      if(gpsConnected == false)
+      {
+        sendDummyData(client);
+      }
+      while (gpsSerial.available() > 0) {
+          gps.encode(gpsSerial.read());
+          gpsConnected = true; // Mark GPS as connected
+      }
+        if (gps.location.isUpdated()) {
+            String currentTimestamp = String(gps.time.hour()) + ":" + 
+                                      String(gps.time.minute()) + ":" + 
+                                      String(gps.time.second()) + "." + 
+                                      String(gps.time.centisecond());
+
+            if (currentTimestamp != lastTimestamp && millis() - lastUpdateTime >= 40) {
+                lastUpdateTime = millis();
+                lastTimestamp = currentTimestamp;
+                sendGpsUpdate(client);
+            }
         }
     }
-}
 
     // Client disconnected
     Serial.println("Client disconnected");
@@ -137,7 +147,7 @@ void sendGpsUpdate(WiFiClient &client) {
     Serial.println("GPS Update Sent: " + currentGpsData);
   }
 
-String createGpsJson() {
+    String createGpsJson() {
     char jsonBuffer[128]; // Allocate buffer for JSON string
 
     // Get current millis (milliseconds since the program started)
@@ -169,7 +179,6 @@ String createGpsJson() {
 
 
 
-
 void sendDummyData(WiFiClient &client) {
   String dummyData = "{";
   dummyData += "\"latitude\": " + String(random(-900000, 900000) / 10000.0, 6) + ",";
@@ -179,12 +188,10 @@ void sendDummyData(WiFiClient &client) {
   dummyData += "\"satellites\": " + String(random(1, 12)) + ",";
   dummyData += "\"timestamp\": \"" + String(random(0, 24)) + ":" + String(random(0, 60)) + ":" + String(random(0, 60)) + "\"";
   dummyData += "}";
-  delay(500);
+  delay(10);
 
-/*
-  if (dummyData != lastGpsData) {
-    lastGpsData = dummyData;
+
     client.println(dummyData);  // Send to the connected client
     Serial.println("Dummy Data Sent: " + dummyData);
-  }*/
+  
 }
