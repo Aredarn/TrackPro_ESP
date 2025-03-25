@@ -135,37 +135,47 @@ void sendGpsUpdate(WiFiClient &client) {
   client.println(currentGpsData);
   Serial.println("GPS Update Sent: " + currentGpsData);
 }
-
 String createGpsJson() {
-  char jsonBuffer[128];  // Allocate buffer for JSON string
+    char jsonBuffer[128];  // Allocate buffer for JSON string
 
-  // Get current millis (milliseconds since the program started)
-  unsigned long currentMillis = millis();
+    // Get current millis (milliseconds since the program started)
+    unsigned long currentMillis = millis();
 
-  // Calculate milliseconds within the current second (based on current millis)
-  int millisPart = currentMillis % 1000;  // Milliseconds within the current second
+    // Calculate milliseconds within the current second (based on current millis)
+    int millisPart = currentMillis % 1000;  // Milliseconds within the current second
 
-  // Get GPS time (assuming gps.time is valid)
-  int hour = gps.time.isValid() ? gps.time.hour() : 0;
-  int minute = gps.time.isValid() ? gps.time.minute() : 0;
-  int second = gps.time.isValid() ? gps.time.second() : 0;
+    // Get GPS time (assuming gps.time is valid)
+    int hour = gps.time.isValid() ? gps.time.hour() : 0;
+    int minute = gps.time.isValid() ? gps.time.minute() : 0;
+    int second = gps.time.isValid() ? gps.time.second() : 0;
 
-  snprintf(jsonBuffer, sizeof(jsonBuffer),
-           "{\"latitude\": %.6f, \"longitude\": %.6f, \"altitude\": %.2f, \"speed\": %.2f, \"satellites\": %d, \"timestamp\": \"%02d:%02d:%02d.%03d\"}",
-           gps.location.isValid() ? gps.location.lat() : 0.0,
-           gps.location.isValid() ? gps.location.lng() : 0.0,
-           gps.altitude.isValid() ? gps.altitude.meters() : 0.0,
-           gps.speed.isValid() ? gps.speed.kmph() : 0.0,
-           gps.satellites.isValid() ? gps.satellites.value() : 0,
-           hour,
-           minute,
-           second,
-           millisPart  // Milliseconds from system's millis()
-  );
+    // Create timestamp string: "HH:mm:ss.SSS"
+    String formattedTimestamp = String(hour) + ":" + String(minute) + ":" + String(second) + "." + String(millisPart);
 
-  return String(jsonBuffer);
+    // Use snprintf to format the JSON string
+    snprintf(jsonBuffer, sizeof(jsonBuffer),
+             "{\"latitude\": %.6f, \"longitude\": %.6f, \"altitude\": %.2f, \"speed\": %.2f, \"satellites\": %d, \"timestamp\": \"%s\"}",
+             gps.location.isValid() ? gps.location.lat() : 0.0,
+             gps.location.isValid() ? gps.location.lng() : 0.0,
+             gps.altitude.isValid() ? gps.altitude.meters() : 0.0,
+             gps.speed.isValid() ? gps.speed.kmph() : 0.0,
+             gps.satellites.isValid() ? gps.satellites.value() : 0,
+             formattedTimestamp.c_str()  // Pass formatted timestamp
+    );
+
+    return String(jsonBuffer);
 }
 
+String createFormattedTimestamp() {
+    // Get GPS time in HH:mm:ss.SSS format
+    unsigned long currentMillis = millis();
+    int millisPart = currentMillis % 1000;  // Milliseconds within the current second
+    int hour = gps.time.isValid() ? gps.time.hour() : 0;
+    int minute = gps.time.isValid() ? gps.time.minute() : 0;
+    int second = gps.time.isValid() ? gps.time.second() : 0;
+
+    return String(hour) + ":" + String(minute) + ":" + String(second) + "." + String(millisPart);
+}
 
 
 void sendDummyData(WiFiClient &client) {
