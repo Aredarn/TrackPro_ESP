@@ -3,6 +3,7 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 #include "SSD1306Wire.h"
+#include <ArduinoJson.h>
 #define GPSBaud 9600
 
 // GPS and SoftwareSerial objects
@@ -108,6 +109,13 @@ void loop() {
 
 
     while (client.connected()) {
+
+      if(gpsSerial.available() < 1 && millis() - lastUpdateTime >= 100)
+      {
+        lastUpdateTime = millis();
+        sendDummyGpsUpdate(client);
+      }
+      
       gpsConnected = false;
       while (gpsSerial.available() > 0) {
         gps.encode(gpsSerial.read());
@@ -116,12 +124,13 @@ void loop() {
       if (gps.location.isUpdated()) {
         String currentTimestamp = String(gps.time.hour()) + ":" + String(gps.time.minute()) + ":" + String(gps.time.second()) + "." + String(gps.time.centisecond());
 
-        if (currentTimestamp != lastTimestamp && millis() - lastUpdateTime >= 40) {
+        if (currentTimestamp != lastTimestamp && millis() - lastUpdateTime >= 100) {
           lastUpdateTime = millis();
           lastTimestamp = currentTimestamp;
           sendGpsUpdate(client);
         }
       }
+
     }
 
     // Client disconnected
@@ -135,6 +144,14 @@ void sendGpsUpdate(WiFiClient &client) {
   client.println(currentGpsData);
   Serial.println("GPS Update Sent: " + currentGpsData);
 }
+
+void sendDummyGpsUpdate(WiFiClient &client) {
+  String currentGpsData = createDummyGpsJson();
+  client.println(currentGpsData);
+  Serial.println("GPS Update Sent: " + currentGpsData);
+}
+
+/*
 String createGpsJson() {
     char jsonBuffer[128];  // Allocate buffer for JSON string
 
@@ -162,9 +179,47 @@ String createGpsJson() {
              gps.satellites.isValid() ? gps.satellites.value() : 0,
              formattedTimestamp.c_str()  // Pass formatted timestamp
     );
-
     return String(jsonBuffer);
+}*/
+
+
+//For real data
+String createGpsJson() {
+  StaticJsonDocument<200> doc;  // Specify a size for the JSON document
+
+  doc["latitude"] = gps.location.isValid() ? gps.location.lat() : 0.0;
+  doc["longitude"] = gps.location.isValid() ? gps.location.lng() : 0.0;
+  doc["altitude"] = gps.altitude.isValid() ? gps.altitude.meters() : 0.0;
+  doc["speed"] = gps.speed.isValid() ? gps.speed.kmph() : 0.0;
+  doc["satellites"] = gps.satellites.isValid() ? gps.satellites.value() : 0;
+  doc["timestamp"] = createFormattedTimestamp().c_str();
+
+  String jsonString;
+  serializeJson(doc, jsonString);
+  return jsonString;
 }
+
+String createDummyGpsJson() {
+  StaticJsonDocument<200> doc;  // Allocate memory for the JSON document
+
+  doc["latitude"] = random(-900000, 900000) / 10000.0;
+  doc["longitude"] = random(-1800000, 1800000) / 10000.0;
+  doc["altitude"] = random(0, 5000);
+  doc["speed"] = random(0, 230);
+  doc["satellites"] = random(7, 12);
+  
+  char timestamp[16];
+  snprintf(timestamp, sizeof(timestamp), "%02d:%02d:%02d.000", 
+           random(0, 24), random(0, 60), random(0, 60));
+  doc["timestamp"] = timestamp;
+
+  String jsonString;
+  serializeJson(doc, jsonString);
+  return jsonString;
+}
+
+
+
 
 String createFormattedTimestamp() {
     // Get GPS time in HH:mm:ss.SSS format
@@ -175,22 +230,4 @@ String createFormattedTimestamp() {
     int second = gps.time.isValid() ? gps.time.second() : 0;
 
     return String(hour) + ":" + String(minute) + ":" + String(second) + "." + String(millisPart);
-}
-
-
-void sendDummyData(WiFiClient &client) {
-  char dummyBuffer[128];  // Allocate buffer for JSON string
-
-  snprintf(dummyBuffer, sizeof(dummyBuffer),
-           "{\"latitude\": %.6f, \"longitude\": %.6f, \"altitude\": %d, \"speed\": %d, \"satellites\": %d, \"timestamp\": \"%02d:%02d:%02d.000\"}",
-           random(-900000, 900000) / 10000.0,
-           random(-1800000, 1800000) / 10000.0,
-           random(0, 5000),
-           random(0, 230),
-           random(7, 12),
-           random(0, 24),
-           random(0, 60),
-           random(0, 60));
-  client.println(dummyBuffer);
-  Serial.println("Dummy Data Sent: " + String(dummyBuffer));
 }
