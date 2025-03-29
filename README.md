@@ -31,4 +31,5 @@ Setup
 Tested with:
 
     No1:
-        ESp8266 OLED with GY-GPS6MV2 
+        ESp8266 OLED with GY-GPS6MV2
+        ESP32 C3 super mini 
