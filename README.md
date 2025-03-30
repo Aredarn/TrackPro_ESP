@@ -31,5 +31,5 @@ Setup
 Tested with:
 
     No1:
-        ESp8266 OLED with GY-GPS6MV2
-        ESP32 C3 super mini 
+        ESp8266 OLED with GY-GPS6MV2 at 5hz refresh
+        ESP32 C3 super mini with MatekSYS M10Q 
