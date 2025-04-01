@@ -41,6 +41,7 @@ WiFiServer tcpServer(4210);
 String lastTimestamp = "";         // Store the last timestamp sent
 unsigned long lastUpdateTime = 0;  // For timing updates
 bool gpsConnected = false;         // Flag for GPS connection
+bool isConnected = false;
 
 void setup() {
   Serial.begin(115200);
@@ -90,37 +91,42 @@ void loop() {
   display.setFont(ArialMT_Plain_10);
 
   // The coordinates define the left starting point of the text
+
+  Display();
+
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.drawString(20, 20, "Waiting for client");
   display.display();
   WiFiClient client = tcpServer.available();
 
   if (client) {
+      client.setRxBufferSize(128);  // Reduce from default 1460
+      client.setTxBufferSize(128);
 
-    display.clear();
-    display.setFont(ArialMT_Plain_10);
-
-    // The coordinates define the left starting point of the text
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.drawString(20, 20, "Client connected");
-    display.display();
 
     Serial.println("Client connected");
-
+    isConnected = true;
+    Display();
 
     while (client.connected()) {
 
+
+      //ONLY FOR TESTING
+      /*
       if(gpsSerial.available() < 1 && millis() - lastUpdateTime >= 100)
       {
         lastUpdateTime = millis();
         sendDummyGpsUpdate(client);
       }
-      
+      */
       gpsConnected = false;
-      while (gpsSerial.available() > 0) {
-        gps.encode(gpsSerial.read());
+      if (gpsSerial.available() > 0) {
+        while (gpsSerial.available() > 0) {
+          gps.encode(gpsSerial.read());
+        }
         gpsConnected = true;  // Mark GPS as connected
       }
+
       if (gps.location.isUpdated()) {
         String currentTimestamp = String(gps.time.hour()) + ":" + String(gps.time.minute()) + ":" + String(gps.time.second()) + "." + String(gps.time.centisecond());
 
@@ -130,58 +136,45 @@ void loop() {
           sendGpsUpdate(client);
         }
       }
-
     }
 
     // Client disconnected
+    isConnected = false;
+    Display();
     Serial.println("Client disconnected");
     client.stop();
   }
 }
 
+
+void Display() {
+
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+
+  // The coordinates define the left starting point of the text
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(20, 20, isConnected ? "Client connected" : "Waiting for client");
+  display.drawString(20, 35, gpsConnected ? "GPS signal OK" : "Waiting for GPS");
+  display.display();
+}
+
+
 void sendGpsUpdate(WiFiClient &client) {
   String currentGpsData = createGpsJson();
-  client.println(currentGpsData);
+  client.print(currentGpsData);
+  client.print("\n");  // Explicit newline
+  client.flush();  // Force immediate send
   Serial.println("GPS Update Sent: " + currentGpsData);
 }
 
 void sendDummyGpsUpdate(WiFiClient &client) {
   String currentGpsData = createDummyGpsJson();
-  client.println(currentGpsData);
+  client.print(currentGpsData); 
+  client.print("\n"); 
+  client.flush(); 
   Serial.println("GPS Update Sent: " + currentGpsData);
 }
-
-/*
-String createGpsJson() {
-    char jsonBuffer[128];  // Allocate buffer for JSON string
-
-    // Get current millis (milliseconds since the program started)
-    unsigned long currentMillis = millis();
-
-    // Calculate milliseconds within the current second (based on current millis)
-    int millisPart = currentMillis % 1000;  // Milliseconds within the current second
-
-    // Get GPS time (assuming gps.time is valid)
-    int hour = gps.time.isValid() ? gps.time.hour() : 0;
-    int minute = gps.time.isValid() ? gps.time.minute() : 0;
-    int second = gps.time.isValid() ? gps.time.second() : 0;
-
-    // Create timestamp string: "HH:mm:ss.SSS"
-    String formattedTimestamp = String(hour) + ":" + String(minute) + ":" + String(second) + "." + String(millisPart);
-
-    // Use snprintf to format the JSON string
-    snprintf(jsonBuffer, sizeof(jsonBuffer),
-             "{\"latitude\": %.6f, \"longitude\": %.6f, \"altitude\": %.2f, \"speed\": %.2f, \"satellites\": %d, \"timestamp\": \"%s\"}",
-             gps.location.isValid() ? gps.location.lat() : 0.0,
-             gps.location.isValid() ? gps.location.lng() : 0.0,
-             gps.altitude.isValid() ? gps.altitude.meters() : 0.0,
-             gps.speed.isValid() ? gps.speed.kmph() : 0.0,
-             gps.satellites.isValid() ? gps.satellites.value() : 0,
-             formattedTimestamp.c_str()  // Pass formatted timestamp
-    );
-    return String(jsonBuffer);
-}*/
-
 
 //For real data
 String createGpsJson() {
@@ -207,9 +200,9 @@ String createDummyGpsJson() {
   doc["altitude"] = random(0, 5000);
   doc["speed"] = random(0, 230);
   doc["satellites"] = random(7, 12);
-  
+
   char timestamp[16];
-  snprintf(timestamp, sizeof(timestamp), "%02d:%02d:%02d.000", 
+  snprintf(timestamp, sizeof(timestamp), "%02d:%02d:%02d.000",
            random(0, 24), random(0, 60), random(0, 60));
   doc["timestamp"] = timestamp;
 
@@ -222,12 +215,12 @@ String createDummyGpsJson() {
 
 
 String createFormattedTimestamp() {
-    // Get GPS time in HH:mm:ss.SSS format
-    unsigned long currentMillis = millis();
-    int millisPart = currentMillis % 1000;  // Milliseconds within the current second
-    int hour = gps.time.isValid() ? gps.time.hour() : 0;
-    int minute = gps.time.isValid() ? gps.time.minute() : 0;
-    int second = gps.time.isValid() ? gps.time.second() : 0;
+  // Get GPS time in HH:mm:ss.SSS format
+  unsigned long currentMillis = millis();
+  int millisPart = currentMillis % 1000;  // Milliseconds within the current second
+  int hour = gps.time.isValid() ? gps.time.hour() : 0;
+  int minute = gps.time.isValid() ? gps.time.minute() : 0;
+  int second = gps.time.isValid() ? gps.time.second() : 0;
 
-    return String(hour) + ":" + String(minute) + ":" + String(second) + "." + String(millisPart);
+  return String(hour) + ":" + String(minute) + ":" + String(second) + "." + String(millisPart);
 }
