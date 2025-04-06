@@ -1,5 +1,4 @@
 #include <TinyGPS++.h>
-#include <SoftwareSerial.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
 
@@ -14,32 +13,30 @@
 
 // GPS and SoftwareSerial objects
 TinyGPSPlus gps;
-SoftwareSerial gpsSerial(4, 5);  // RX, TX
+HardwareSerial mySerial(1);  
 
-// Send UBX command
-void sendUBX(byte *msg, uint8_t len) {
-  byte ck[2];
-  calcChecksum(msg, len, ck);
-  gpsSerial.write(0xB5);  // Header
-  gpsSerial.write(0x62);  // Header
-  gpsSerial.write(msg, len);
-  gpsSerial.write(ck[0]);
-  gpsSerial.write(ck[1]);
-}
-
-void calcChecksum(byte *msg, uint8_t len, byte *ck) {
-  ck[0] = ck[1] = 0;
-  for (uint8_t i = 0; i < len; i++) {
-    ck[0] += msg[i];
-    ck[1] += ck[0];
-  }
-}
 
 // Variables to store GPS data
 String lastTimestamp = "";
 unsigned long lastUpdateTime = 0;  // For timing updates
 bool gpsConnected = false;         // Flag for GPS connection
 bool isConnected = false;
+
+const uint8_t setRate10Hz[] = {
+  0xB5, 0x62,       // UBX header
+  0x06, 0x08,       // CFG-RATE
+  0x06, 0x00,       // Payload length: 6 bytes
+  0x64, 0x00,       // Measurement rate: 100ms (0x0064)
+  0x01, 0x00,       // Navigation rate: 1
+  0x01, 0x00,       // Time reference: UTC
+  0x7A, 0x12        // Checksum
+};
+
+void sendUBX(const uint8_t *msg, uint8_t len) {
+  for (uint8_t i = 0; i < len; i++) {
+    mySerial.write(msg[i]);
+  }
+}
 
 // WiFi configuration constants
 WiFiServer tcpServer(4210);
@@ -84,8 +81,6 @@ void setupWiFiAP() {
   Serial.print("AP IP Address: ");
   Serial.println(WiFi.softAPIP());
 }
-
-
 void configureClientSocket(WiFiClient &client) {
   int sock = client.fd();
   int enable = 1;
@@ -97,37 +92,25 @@ void configureClientSocket(WiFiClient &client) {
   setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable));
 }
 
-
-
 void setup() {
   Serial.begin(115200);
-  gpsSerial.begin(GPSBaud);
-  delay(2000);  // Allow GPS module to initialize
+  mySerial.begin(9600, SERIAL_8N1, 16, 17);
+  delay(2000);
 
+  sendUBX(setRate10Hz, sizeof(setRate10Hz));
+  Serial.println("GPS update rate set to 10Hz");
 
-  byte set5Hz[] = { 0x06, 0x08, 0x06, 0x00, 0xC8, 0x00, 0x01, 0x00, 0x01, 0x00 };
-  sendUBX(set5Hz, sizeof(set5Hz));
-
-  byte saveConfig[] = { 0x06, 0x09, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-  sendUBX(saveConfig, sizeof(saveConfig));
-
-  // Initialize GPS...
   setupWiFiAP();
 
   // Start TCP server with optimized settings
   tcpServer.setNoDelay(true);
   tcpServer.begin();
   Serial.println("TCP server started.");
+  Serial.println("Dumping GPS responses:");
+  while (mySerial.available()) {
+    Serial.write(mySerial.read());
+  }
 }
-
-//ONLY FOR TESTING
-/*
-      if(gpsSerial.available() < 1 && millis() - lastUpdateTime >= 100)
-      {
-        lastUpdateTime = millis();
-        sendDummyGpsUpdate(client);
-      }
-      */
 
 void loop() {
   WiFiClient client = tcpServer.available();
@@ -142,16 +125,9 @@ void loop() {
     while (client.connected()) {
       // Handle GPS data
 
-      gpsConnected = false;
-      if(gpsConnected == false && millis() - lastUpdateTime >= 100)
-      {
-        lastUpdateTime = millis();
-        sendDummyGpsUpdate(client);
-      }
-      
-      if (gpsSerial.available() > 0) {
-        while (gpsSerial.available() > 0) {
-          gps.encode(gpsSerial.read());
+      if (mySerial.available() > 0) {
+        while (mySerial.available() > 0) {
+          gps.encode(mySerial.read());
         }
         gpsConnected = true;
       }
@@ -162,6 +138,9 @@ void loop() {
         if (currentTimestamp != lastTimestamp && millis() - lastUpdateTime >= 100) {
           lastUpdateTime = millis();
           lastTimestamp = currentTimestamp;
+            String currentGpsData = createGpsJson();
+
+          Serial.print(currentGpsData);
           sendGpsUpdate(client);
         }
       }
