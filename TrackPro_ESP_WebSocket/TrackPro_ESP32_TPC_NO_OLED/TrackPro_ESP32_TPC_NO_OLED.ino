@@ -13,7 +13,7 @@
 
 // GPS and SoftwareSerial objects
 TinyGPSPlus gps;
-HardwareSerial mySerial(1);  
+HardwareSerial mySerial(1);
 
 
 // Variables to store GPS data
@@ -23,13 +23,25 @@ bool gpsConnected = false;         // Flag for GPS connection
 bool isConnected = false;
 
 const uint8_t setRate10Hz[] = {
-  0xB5, 0x62,       // UBX header
-  0x06, 0x08,       // CFG-RATE
-  0x06, 0x00,       // Payload length: 6 bytes
-  0x64, 0x00,       // Measurement rate: 100ms (0x0064)
-  0x01, 0x00,       // Navigation rate: 1
-  0x01, 0x00,       // Time reference: UTC
-  0x7A, 0x12        // Checksum
+  0xB5, 0x62,  // UBX header
+  0x06, 0x08,  // CFG-RATE
+  0x06, 0x00,  // Payload length: 6 bytes
+  0x64, 0x00,  // Measurement rate: 100ms (0x0064)
+  0x01, 0x00,  // Navigation rate: 1
+  0x01, 0x00,  // Time reference: UTC
+  0x7A, 0x12   // Checksum
+};
+
+uint8_t cfgPrt[] = {
+  0xB5, 0x62,                          // Header
+  0x06, 0x00,                          // Class and ID for CFG-PRT
+  0x14, 0x00,                          // Length of the message (20 bytes)
+  0x01, 0x00,                          // Port ID (UART1 or another port)
+  0x00, 0x00,                          // Reserved
+  0xD0, 0x08, 0x00, 0x00, 0x00, 0xC2,  // Baud rate settings (115200)
+  0x01, 0x00, 0x03, 0x00,              // Reserved
+  0x03, 0x00, 0x00, 0x00,              // Configuration settings
+  0x00, 0x00, 0xBC, 0x5E               // Checksum and additional settings
 };
 
 void sendUBX(const uint8_t *msg, uint8_t len) {
@@ -47,40 +59,23 @@ const IPAddress AP_GATEWAY(192, 168, 4, 1);
 const IPAddress AP_SUBNET(255, 255, 255, 0);
 
 void setupWiFiAP() {
-  // First completely deinit WiFi
   WiFi.enableAP(false);
   WiFi.disconnect(true);
   delay(100);
 
-  // Configure AP parameters using Arduino API
+  // Set AP configuration
   WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
+  
+  // Start AP with SSID, password, channel, visibility, max connections
+  WiFi.softAP(AP_SSID, AP_PASSWORD, 6, 0, 1); // Channel 6, visible, max 1 connection
 
-  // Set custom WiFi parameters before starting
-  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  cfg.nvs_enable = 0;  // Disable NVS for this session
-  esp_wifi_init(&cfg);
+  delay(500); // Allow time for AP to initialize
 
-  // Set aggressive WiFi parameters
-  esp_wifi_set_storage(WIFI_STORAGE_RAM);
-  esp_wifi_set_mode(WIFI_MODE_AP);
-  esp_wifi_set_ps(WIFI_PS_NONE);
-
-  // Start AP with Arduino API
-  WiFi.softAP(AP_SSID, AP_PASSWORD, 1, 0, 1);
-
-  // Additional low-level configuration
-  wifi_config_t wifi_config;
-  esp_wifi_get_config(WIFI_IF_AP, &wifi_config);
-  wifi_config.ap.beacon_interval = 100;
-  wifi_config.ap.max_connection = 1;
-  esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
-
-  // Add delay for AP stabilization
-  delay(500);
-
-  Serial.print("AP IP Address: ");
+  Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
 }
+
+
 void configureClientSocket(WiFiClient &client) {
   int sock = client.fd();
   int enable = 1;
@@ -99,6 +94,13 @@ void setup() {
 
   sendUBX(setRate10Hz, sizeof(setRate10Hz));
   Serial.println("GPS update rate set to 10Hz");
+  delay(1000); 
+
+  sendUBX(cfgPrt, sizeof(cfgPrt));
+  delay(1000);  // Allow time for save and reboot
+
+  mySerial.updateBaudRate(115200);
+  delay(100);  // Allow time for save and reboot
 
   setupWiFiAP();
 
@@ -138,7 +140,7 @@ void loop() {
         if (currentTimestamp != lastTimestamp && millis() - lastUpdateTime >= 100) {
           lastUpdateTime = millis();
           lastTimestamp = currentTimestamp;
-            String currentGpsData = createGpsJson();
+          String currentGpsData = createGpsJson();
 
           Serial.print(currentGpsData);
           sendGpsUpdate(client);
