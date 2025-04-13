@@ -27,7 +27,7 @@ Tested with:
 
        - ESP8266 OLED with GY-GPS6MV2 at 5hz refresh
        - ESP32 C3 super mini with MatekSYS M10Q 
-       - ESP32 38 PIN with MatekSYS M10Q 
+       - ESP32 38 PIN with MatekSYS M10Q (Working at 115200 baud rate at 10hz) [goal:25hz]
 
 Used libraries:
 
