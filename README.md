@@ -29,6 +29,7 @@ Tested with:
        - ESP32 C3 super mini with MatekSYS M10Q 
        - ESP32 38 PIN with MatekSYS M10Q (Working at 115200 baud rate at 10hz) [goal:25hz]
 
+       - Wireshark time: RTT 30ms  
 Used libraries:
 
        - HardwareSerial
