@@ -33,3 +33,8 @@ Tested with:
 Used libraries:
 
        - HardwareSerial
+
+Future plans:
+
+       - Lean angle 
+
