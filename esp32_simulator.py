@@ -2,46 +2,219 @@ import socket
 import time
 import json
 import datetime
+import math   
+HOST = '0.0.0.0'
+PORT = 4210
 
-# Inside your loop, where you build 'data' dict
-now = datetime.datetime.utcnow()
-formatted_time = now.strftime("%H:%M:%S.%f")[:-3]  # ':-3' trims microseconds to milliseconds
+# Your provided track waypoints
+# Pannonia Ring track
+TRACK = [
+    (47.305300, 17.048138),
+    (47.302270, 17.049691),
+    (47.301004, 17.048439),
+    (47.300890, 17.048053),
+    (47.301029, 17.047764),
+    (47.302883, 17.046380),
+    (47.302997, 17.046187),
+    (47.303095, 17.045789),
+    (47.303422, 17.043212),
+    (47.303258, 17.042779),
+    (47.302997, 17.042706),
+    (47.300882, 17.045801),
+    (47.300572, 17.045994),
+    (47.300237, 17.045910),
+    (47.299959, 17.045356),
+    (47.299992, 17.044838),
+    (47.301160, 17.040972),
+    (47.301486, 17.040623),
+    (47.301846, 17.040563),
+    (47.302744, 17.041346),
+    (47.302981, 17.041382),
+    (47.303307, 17.041213),
+    (47.303724, 17.040515),
+    (47.303887, 17.039732),
+    (47.303691, 17.037420),
+    (47.303691, 17.037046),
+    (47.304508, 17.035324),
+    (47.304696, 17.035192),
+    (47.304851, 17.035276),
+    (47.305349, 17.036324),
+    (47.305373, 17.036757),
+    (47.305210, 17.037335),
+    (47.304843, 17.037733),
+    (47.304638, 17.038239),
+    (47.304565, 17.038624),
+    (47.304508, 17.043248),
+    (47.304451, 17.043513),
+    (47.304075, 17.044344),
+    (47.304026, 17.044549),
+    (47.304059, 17.044838),
+    (47.304181, 17.045151),
+    (47.304393, 17.045187),
+    (47.304557, 17.045139),
+    (47.305594, 17.044380),
+    (47.306631, 17.042670),
+    (47.306778, 17.042550),
+    (47.306958, 17.042550),
+    (47.307137, 17.042622),
+    (47.308574, 17.044501),
+    (47.308648, 17.044730),
+    (47.308721, 17.045585),
+    (47.308615, 17.046054),
+    (47.308436, 17.046392),
+    (47.306092, 17.047740),
+    (47.304973, 17.048282),
+]
 
-HOST = '0.0.0.0'  # Listen on all interfaces
-PORT = 4210      # Port number
 
-def generate_dummy_gps():
-    current_time = time.time()
+# Nürburgring track
+TRACK = [
+    (50.3527008, 6.9832441),
+    (50.3500245, 6.9762865),
+    (50.346916, 6.968372),
+    (50.345397, 6.964457),
+    (50.3439256, 6.9609668),
+    (50.3431563, 6.9592267),
+    (50.3408439, 6.9562155),
+    (50.340609, 6.9559632),
+    (50.3403983, 6.9557741),
+    (50.339538, 6.9549679),
+    (50.3388295, 6.9538264),
+    (50.3383564, 6.9534466),
+    (50.3383033, 6.9534156),
+    (50.338075, 6.9528681),
+    (50.3377306, 6.9512265),
+    (50.3377353, 6.9509513),
+    (50.3382678, 6.9498572),
+    (50.3385235, 6.949453),
+    (50.3386769, 6.9492416),
+    (50.3391848, 6.9486675),
+    (50.3393483, 6.948297),
+    (50.3393488, 6.9482718),
+    (50.3392871, 6.9480445),
+    (50.3392658, 6.9480015),
+    (50.3382658, 6.9470826),
+    (50.337688, 6.9461167),
+    (50.3373742, 6.9450709),
+    (50.3373435, 6.94492),
+    (50.3373243, 6.9443909),
+    (50.3373375, 6.944251),
+    (50.3379549, 6.9421846),
+    (50.3380658, 6.9413132),
+    (50.3381323, 6.9399485),
+    (50.3379337, 6.9390216),
+    (50.3379374, 6.9389073),
+    (50.3379504, 6.9388018),
+    (50.3383435, 6.9380255),
+    (50.3384501, 6.9379093),
+    (50.3387776, 6.9376799),
+    (50.338898, 6.9375762),
+    (50.3389569, 6.9375013),
+    (50.3395809, 6.9364737),
+    (50.3399589, 6.9361394),
+    (50.3402372, 6.9339092),
+    (50.340274, 6.9338072),
+    (50.3403501, 6.9336818),
+    (50.3410153, 6.9334324),
+    (50.3413213, 6.9330873),
+    (50.3428825, 6.9295538),
+    (50.3433293, 6.9287777),
+    (50.3451554, 6.9264573),
+    (50.3454649, 6.9260815),
+    (50.3455173, 6.9260372),
+    (50.3466946, 6.9258378),
+    (50.3467818, 6.9258729),
+    (50.3480198, 6.9266375),
+    (50.3488714, 6.9268463),
+    (50.3494568, 6.926965),
+    (50.351027, 6.9268148),
+    (50.3511836, 6.9267751),
+    (50.3538457, 6.9252582),
+    (50.3545279, 6.9248292),
+    (50.3556528, 6.924118),
+    (50.3563301, 6.9233907),
+    (50.356918, 6.9221102),
+    (50.3574215, 6.920398),
+    (50.358063, 6.920062),
+    (50.358326, 6.9203826),
+    (50.3587091, 6.984639),
+    (50.3588149, 6.9844146),
+    (50.3589474, 6.9838568),
+    (50.3589354, 6.9836354),
+    (50.3578657, 6.9811965),
+    (50.3578266, 6.9811722),
+    (50.3577884, 6.9811555),
+    (50.357486, 6.9812753),
+    (50.3571103, 6.9818028),
+    (50.356904, 6.982205),
+    (50.3561681, 6.9852577),
+    (50.3560985, 6.985395),
+    (50.3555808, 6.9859393),
+    (50.3555271, 6.9859807),
+    (50.3547522, 6.9863194),
+    (50.3541198, 6.9862103),
+    (50.3537712, 6.9859117),
+    (50.3534631, 6.9854013),
+    (50.3527008, 6.9832441),
+    (50.3500245, 6.9762865),
+    (50.346916, 6.968372)
+]
+
+def interpolate(a, b, frac):
+    return a + (b - a) * frac
+
+def generate_track_point(idx, frac):
+    lat1, lon1 = TRACK[idx]
+    lat2, lon2 = TRACK[(idx + 1) % len(TRACK)]
+    lat = interpolate(lat1, lat2, frac)
+    lon = interpolate(lon1, lon2, frac)
+    now = datetime.datetime.utcnow()
+    ts = now.strftime("%H:%M:%S.%f")[:-3]
+    speed = 15 + 2 * math.sin(time.time() / 3)  # vary speed 3–7 m/s
     return {
-        "latitude": 37.7749 + (current_time % 1) * 0.01,
-        "longitude": -122.4194 + (current_time % 1) * 0.01,
-        "altitude": 50.0 + (current_time % 10),
-        "speed": round(current_time % 100, 3),
-        "satellites": 12,
-        "timestamp": formatted_time
+        "latitude": round(lat, 6),
+        "longitude": round(lon, 6),
+        "altitude": 100 + 5 * math.sin(time.time() / 10),
+        "speed": round(speed, 3),
+        "satellites": 8,
+        "timestamp": ts
     }
 
+#Use in android studio emulator with:
+# 10.0.2.2
 def start_server():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_socket.bind((HOST, PORT))
-        server_socket.listen()
-        print(f"Simulated ESP32 server running on {HOST}:{PORT}")
+    import math  # needed for speed variation
+    idx = 0
+    frac = 0.0
+    step = 0.1  # 10 Hz updates
 
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((HOST, PORT))
+        s.listen()
+        print(f"Track simulator on {HOST}:{PORT}")
         while True:
-            print("Waiting for a client to connect...")
-            conn, addr = server_socket.accept()
-            with conn:
-                print(f"Connected by {addr}")
-                try:
-                    while True:
-                        dummy_data = generate_dummy_gps()
-                        json_data = json.dumps(dummy_data) + "\n"  # Add newline for client readline()
-                        conn.sendall(json_data.encode())
-                        time.sleep(0.1)  # Adjust frequency: 10Hz is 0.1s (not 0.04s!)
-                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                    print(f"Client {addr} disconnected. Waiting for new connection...\n")
-                    continue
+            conn, addr = s.accept()
+            print("Client connected:", addr)
+            try:
+                while True:
+                    try:
+                        point = generate_track_point(idx, frac)
+                        conn.sendall((json.dumps(point) + "\n").encode())
+                        time.sleep(0.15)
+                        frac += step
+                        if frac >= 1.0:
+                            frac -= 1.0
+                            idx = (idx + 1) % len(TRACK)
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        print("Client disconnected, resetting track position")
+                        idx = 0
+                        frac = 0.0
+                        break  # go back to accept()
+            except (BrokenPipeError, ConnectionResetError):
+                print("Client disconnected")
+                idx = 0
+                frac = 0.0
 
 if __name__ == "__main__":
     start_server()
