@@ -205,7 +205,9 @@ void acceptWifiClientIfNeeded() {
 // Runs every loop() regardless of client state, so the UART RX buffer can't overflow while nothing is connected
 void pumpGpsSerial() {
   while (mySerial.available() > 0) {
-    gps.encode(mySerial.read());
+    char c = mySerial.read();
+    Serial.write(c);  // TEMP DEBUG: raw NMEA passthrough to see what the module actually sends - remove once diagnosed
+    gps.encode(c);
   }
 }
 
