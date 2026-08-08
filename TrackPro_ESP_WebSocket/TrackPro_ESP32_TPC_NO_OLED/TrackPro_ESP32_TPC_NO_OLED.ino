@@ -1,5 +1,4 @@
 #include <TinyGPS++.h>
-#include <Wire.h>
 #include <ArduinoJson.h>
 
 #include <esp_wifi.h>
@@ -10,8 +9,6 @@
 #include <lwip/sockets.h>
 #include <BluetoothSerial.h>
 #include <Preferences.h>
-
-#define GPSBaud 9600
 
 // GPS and SoftwareSerial objects
 TinyGPSPlus gps;
@@ -24,8 +21,7 @@ String lastTimestamp = "";
 unsigned long lastUpdateTime = 0;  // For timing updates
 uint8_t currentRateHz = 10;
 
-// Transport state (both promoted out of loop() so loop() can be non-blocking
-// and service WiFi + Bluetooth every iteration instead of blocking on one client)
+// Promoted out of loop() so it can stay non-blocking and service both transports every iteration
 WiFiClient wifiClient;
 String wifiCmdBuffer;
 String btCmdBuffer;
@@ -49,11 +45,7 @@ void sendUBX(const uint8_t *msg, uint8_t len) {
   }
 }
 
-// --- UBX CFG-RATE, built at runtime so the phone app can switch Hz ---
-// (replaces the old hardcoded setRate10Hz[] byte array)
-
-// Standard UBX 8-bit Fletcher checksum, over Class+ID+Length+Payload only
-// (not the 2 sync bytes, not the checksum bytes themselves).
+// UBX 8-bit Fletcher checksum, over Class+ID+Length+Payload only (not the sync bytes, not the checksum bytes)
 void ubxChecksum(const uint8_t *buf, size_t len, uint8_t &ckA, uint8_t &ckB) {
   ckA = 0;
   ckB = 0;
@@ -63,9 +55,7 @@ void ubxChecksum(const uint8_t *buf, size_t len, uint8_t &ckA, uint8_t &ckB) {
   }
 }
 
-// Fills outBuf (must be >= 14 bytes) with a complete UBX CFG-RATE message and
-// returns its length. navRate/timeRef stay fixed at 1 (matches the previous
-// hardcoded config); only measRateMs varies with the requested Hz.
+// Fills outBuf (must be >= 14 bytes) with a UBX CFG-RATE message and returns its length
 uint8_t buildCfgRateMsg(uint16_t measRateMs, uint8_t outBuf[14]) {
   outBuf[0] = 0xB5;
   outBuf[1] = 0x62;
@@ -100,8 +90,6 @@ bool applyGpsRate(uint8_t hz) {
   currentRateHz = hz;
   return true;
 }
-
-// --- Persisted rate (NVS), so the last Hz the phone picked survives a reboot ---
 
 uint8_t loadPersistedRateHz() {
   prefs.begin("trackpro", true);
@@ -157,19 +145,14 @@ void configureClientSocket(WiFiClient &client) {
   setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable));
 }
 
-// --- Shared transport helpers ---
-// WiFiClient and BluetoothSerial both support print()/available()/read()/flush()
-// (same Serial-like surface), so these are templated instead of duplicated per
-// transport. Templates are used (rather than a Stream&/Print& base-class
-// reference) so this doesn't depend on exactly which base class declares which
-// method in the ESP32 core -- each concrete type just needs to support the calls
-// below, which both do.
+// Templated (not Stream&/Print&) so WiFiClient and BluetoothSerial share one
+// implementation without depending on which base class declares which method.
 
 template <typename T>
 void sendGpsUpdate(T &out, const String &currentGpsData) {
   out.print(currentGpsData);
-  out.print("\n");  // Explicit newline
-  out.flush();      // Force immediate send
+  out.print("\n");
+  out.flush();  // force immediate send, don't let it sit buffered
   Serial.println("GPS Update Sent: " + currentGpsData);
 }
 
@@ -206,8 +189,6 @@ void pollCommands(T &transport, String &lineBuf) {
   }
 }
 
-// --- Non-blocking loop helpers ---
-
 void acceptWifiClientIfNeeded() {
   if (wifiClient.connected()) return;
 
@@ -221,10 +202,8 @@ void acceptWifiClientIfNeeded() {
   }
 }
 
+// Runs every loop() regardless of client state, so the UART RX buffer can't overflow while nothing is connected
 void pumpGpsSerial() {
-  // Unconditional: previously this only ran while a WiFi client was connected,
-  // so GPS bytes backed up against the UART RX buffer any time nothing was
-  // connected yet (e.g. device powered on before the phone connects).
   while (mySerial.available() > 0) {
     gps.encode(mySerial.read());
   }
@@ -300,21 +279,12 @@ void loop() {
   }
 }
 
-void sendDummyGpsUpdate(WiFiClient &client) {
-  String currentGpsData = createDummyGpsJson();
-  client.print(currentGpsData);
-  client.print("\n");
-  client.flush();
-  Serial.println("GPS Update Sent: " + currentGpsData);
-}
-
-//For real data
 String createGpsJson() {
-  StaticJsonDocument<200> doc;  // Specify a size for the JSON document
+  StaticJsonDocument<200> doc;
 
-  // Report the last known values as-is instead of snapping to 0.0 on a
-  // momentary fix loss (that produced a visible jump to null island / a
-  // fake speed=0 spike). "valid" tells the app whether to trust this fix.
+  // Report last-known values as-is instead of snapping to 0.0 on a momentary fix
+  // loss - "valid" tells the app whether to trust this fix rather than the
+  // firmware faking a jump to null island / a fake speed=0 spike.
   doc["latitude"] = gps.location.lat();
   doc["longitude"] = gps.location.lng();
   doc["altitude"] = gps.altitude.isValid() ? gps.altitude.meters() : 0.0;
@@ -328,32 +298,8 @@ String createGpsJson() {
   return jsonString;
 }
 
-String createDummyGpsJson() {
-  StaticJsonDocument<200> doc;  // Allocate memory for the JSON document
-
-  doc["latitude"] = random(-900000, 900000) / 10000.0;
-  doc["longitude"] = random(-1800000, 1800000) / 10000.0;
-  doc["altitude"] = random(0, 5000);
-  doc["speed"] = random(0, 230);
-  doc["satellites"] = random(7, 12);
-
-  char timestamp[16];
-  snprintf(timestamp, sizeof(timestamp), "%02d:%02d:%02d.000",
-           random(0, 24), random(0, 60), random(0, 60));
-  doc["timestamp"] = timestamp;
-
-  String jsonString;
-  serializeJson(doc, jsonString);
-  return jsonString;
-}
-
-
-
-
+// HH:mm:ss.cc, all fields from the GPS's own clock (not millis()) so timing stays accurate
 String createFormattedTimestamp() {
-  // Get GPS time in HH:mm:ss.cc format, all fields from the GPS's own clock
-  // (previously the sub-second part came from millis(), which isn't synced
-  // to the GPS second boundary and made timing calculations jittery).
   int hour = gps.time.isValid() ? gps.time.hour() : 0;
   int minute = gps.time.isValid() ? gps.time.minute() : 0;
   int second = gps.time.isValid() ? gps.time.second() : 0;
