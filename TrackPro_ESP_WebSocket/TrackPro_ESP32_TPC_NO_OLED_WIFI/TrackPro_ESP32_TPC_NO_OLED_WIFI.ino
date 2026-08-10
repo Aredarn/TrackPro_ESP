@@ -7,13 +7,11 @@
 #include <WiFiServer.h>
 #include <esp_netif.h>
 #include <lwip/sockets.h>
-#include <BluetoothSerial.h>
 #include <Preferences.h>
 
-// GPS and SoftwareSerial objects
+// GPS objects
 TinyGPSPlus gps;
 HardwareSerial mySerial(1);
-BluetoothSerial SerialBT;
 Preferences prefs;
 
 // Variables to store GPS data
@@ -21,11 +19,9 @@ String lastTimestamp = "";
 unsigned long lastUpdateTime = 0;  // For timing updates
 uint8_t currentRateHz = 10;
 
-// Promoted out of loop() so it can stay non-blocking and service both transports every iteration
+// Promoted out of loop() so it can stay non-blocking
 WiFiClient wifiClient;
 String wifiCmdBuffer;
-String btCmdBuffer;
-bool btWasConnected = false;
 
 uint8_t cfgPrt[] = {
   0xB5, 0x62,                          // Header
@@ -129,11 +125,6 @@ void setupWiFiAP() {
   Serial.println(WiFi.softAPIP());
 }
 
-void setupBluetoothSPP() {
-  SerialBT.begin("TrackPro_ESP32");
-  Serial.println("Bluetooth SPP started as 'TrackPro_ESP32'");
-}
-
 void configureClientSocket(WiFiClient &client) {
   int sock = client.fd();
   int enable = 1;
@@ -145,19 +136,14 @@ void configureClientSocket(WiFiClient &client) {
   setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable));
 }
 
-// Templated (not Stream&/Print&) so WiFiClient and BluetoothSerial share one
-// implementation without depending on which base class declares which method.
-
-template <typename T>
-void sendGpsUpdate(T &out, const String &currentGpsData) {
+void sendGpsUpdate(WiFiClient &out, const String &currentGpsData) {
   out.print(currentGpsData);
   out.print("\n");
   out.flush();  // force immediate send, don't let it sit buffered
   Serial.println("GPS Update Sent: " + currentGpsData);
 }
 
-template <typename T>
-void handleCommandLine(const String &line, T &out) {
+void handleCommandLine(const String &line, WiFiClient &out) {
   String trimmed = line;
   trimmed.trim();
 
@@ -175,8 +161,7 @@ void handleCommandLine(const String &line, T &out) {
   out.print("RATE_ERR\n");
 }
 
-template <typename T>
-void pollCommands(T &transport, String &lineBuf) {
+void pollCommands(WiFiClient &transport, String &lineBuf) {
   while (transport.available() > 0) {
     char c = (char)transport.read();
     if (c == '\n') {
@@ -205,9 +190,7 @@ void acceptWifiClientIfNeeded() {
 // Runs every loop() regardless of client state, so the UART RX buffer can't overflow while nothing is connected
 void pumpGpsSerial() {
   while (mySerial.available() > 0) {
-    char c = mySerial.read();
-    Serial.write(c);  // TEMP DEBUG: raw NMEA passthrough to see what the module actually sends - remove once diagnosed
-    gps.encode(c);
+    gps.encode(mySerial.read());
   }
 }
 
@@ -231,7 +214,6 @@ void setup() {
   delay(100);  // Allow time for save and reboot
 
   setupWiFiAP();
-  setupBluetoothSPP();
 
   // Start TCP server with optimized settings
   tcpServer.setNoDelay(true);
@@ -251,18 +233,6 @@ void loop() {
     pollCommands(wifiClient, wifiCmdBuffer);
   }
 
-  if (SerialBT.hasClient()) {
-    if (!btWasConnected) {
-      btCmdBuffer = "";
-      btWasConnected = true;
-      Serial.println("Bluetooth client connected");
-    }
-    pollCommands(SerialBT, btCmdBuffer);
-  } else if (btWasConnected) {
-    btWasConnected = false;
-    Serial.println("Bluetooth client disconnected");
-  }
-
   if (gps.location.isUpdated()) {
     String currentTimestamp = String(gps.time.hour()) + ":" + String(gps.time.minute()) + ":" + String(gps.time.second()) + "." + String(gps.time.centisecond());
 
@@ -273,9 +243,6 @@ void loop() {
 
       if (wifiClient.connected()) {
         sendGpsUpdate(wifiClient, currentGpsData);
-      }
-      if (SerialBT.hasClient()) {
-        sendGpsUpdate(SerialBT, currentGpsData);
       }
     }
   }

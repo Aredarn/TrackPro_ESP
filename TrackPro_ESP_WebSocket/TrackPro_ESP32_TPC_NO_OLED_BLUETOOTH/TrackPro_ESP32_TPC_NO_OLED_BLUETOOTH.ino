@@ -1,16 +1,10 @@
 #include <TinyGPS++.h>
 #include <ArduinoJson.h>
 
-#include <esp_wifi.h>
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <WiFiServer.h>
-#include <esp_netif.h>
-#include <lwip/sockets.h>
 #include <BluetoothSerial.h>
 #include <Preferences.h>
 
-// GPS and SoftwareSerial objects
+// GPS objects
 TinyGPSPlus gps;
 HardwareSerial mySerial(1);
 BluetoothSerial SerialBT;
@@ -21,9 +15,6 @@ String lastTimestamp = "";
 unsigned long lastUpdateTime = 0;  // For timing updates
 uint8_t currentRateHz = 10;
 
-// Promoted out of loop() so it can stay non-blocking and service both transports every iteration
-WiFiClient wifiClient;
-String wifiCmdBuffer;
 String btCmdBuffer;
 bool btWasConnected = false;
 
@@ -104,60 +95,19 @@ void persistRateHz(uint8_t hz) {
   prefs.end();
 }
 
-// WiFi configuration constants
-WiFiServer tcpServer(4210);
-const char *AP_SSID = "TrackPro_AP";
-const char *AP_PASSWORD = "trackpro123";
-const IPAddress AP_IP(192, 168, 4, 1);
-const IPAddress AP_GATEWAY(192, 168, 4, 1);
-const IPAddress AP_SUBNET(255, 255, 255, 0);
-
-void setupWiFiAP() {
-  WiFi.enableAP(false);
-  WiFi.disconnect(true);
-  delay(100);
-
-  // Set AP configuration
-  WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
-
-  // Start AP with SSID, password, channel, visibility, max connections
-  WiFi.softAP(AP_SSID, AP_PASSWORD, 6, 0, 1); // Channel 6, visible, max 1 connection
-
-  delay(500); // Allow time for AP to initialize
-
-  Serial.print("AP IP: ");
-  Serial.println(WiFi.softAPIP());
-}
-
 void setupBluetoothSPP() {
   SerialBT.begin("TrackPro_ESP32");
   Serial.println("Bluetooth SPP started as 'TrackPro_ESP32'");
 }
 
-void configureClientSocket(WiFiClient &client) {
-  int sock = client.fd();
-  int enable = 1;
-  int timeout_ms = 100;
-
-  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
-  setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
-  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(enable));
-  setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable));
-}
-
-// Templated (not Stream&/Print&) so WiFiClient and BluetoothSerial share one
-// implementation without depending on which base class declares which method.
-
-template <typename T>
-void sendGpsUpdate(T &out, const String &currentGpsData) {
+void sendGpsUpdate(BluetoothSerial &out, const String &currentGpsData) {
   out.print(currentGpsData);
   out.print("\n");
   out.flush();  // force immediate send, don't let it sit buffered
   Serial.println("GPS Update Sent: " + currentGpsData);
 }
 
-template <typename T>
-void handleCommandLine(const String &line, T &out) {
+void handleCommandLine(const String &line, BluetoothSerial &out) {
   String trimmed = line;
   trimmed.trim();
 
@@ -175,8 +125,7 @@ void handleCommandLine(const String &line, T &out) {
   out.print("RATE_ERR\n");
 }
 
-template <typename T>
-void pollCommands(T &transport, String &lineBuf) {
+void pollCommands(BluetoothSerial &transport, String &lineBuf) {
   while (transport.available() > 0) {
     char c = (char)transport.read();
     if (c == '\n') {
@@ -189,25 +138,10 @@ void pollCommands(T &transport, String &lineBuf) {
   }
 }
 
-void acceptWifiClientIfNeeded() {
-  if (wifiClient.connected()) return;
-
-  wifiClient.stop();
-  WiFiClient newClient = tcpServer.available();
-  if (newClient) {
-    wifiClient = newClient;
-    configureClientSocket(wifiClient);
-    wifiCmdBuffer = "";
-    Serial.println("WiFi client connected");
-  }
-}
-
 // Runs every loop() regardless of client state, so the UART RX buffer can't overflow while nothing is connected
 void pumpGpsSerial() {
   while (mySerial.available() > 0) {
-    char c = mySerial.read();
-    Serial.write(c);  // TEMP DEBUG: raw NMEA passthrough to see what the module actually sends - remove once diagnosed
-    gps.encode(c);
+    gps.encode(mySerial.read());
   }
 }
 
@@ -230,13 +164,8 @@ void setup() {
   mySerial.updateBaudRate(115200);
   delay(100);  // Allow time for save and reboot
 
-  setupWiFiAP();
   setupBluetoothSPP();
 
-  // Start TCP server with optimized settings
-  tcpServer.setNoDelay(true);
-  tcpServer.begin();
-  Serial.println("TCP server started.");
   Serial.println("Dumping GPS responses:");
   while (mySerial.available()) {
     Serial.write(mySerial.read());
@@ -244,12 +173,7 @@ void setup() {
 }
 
 void loop() {
-  acceptWifiClientIfNeeded();
   pumpGpsSerial();
-
-  if (wifiClient.connected()) {
-    pollCommands(wifiClient, wifiCmdBuffer);
-  }
 
   if (SerialBT.hasClient()) {
     if (!btWasConnected) {
@@ -271,9 +195,6 @@ void loop() {
       lastTimestamp = currentTimestamp;
       String currentGpsData = createGpsJson();
 
-      if (wifiClient.connected()) {
-        sendGpsUpdate(wifiClient, currentGpsData);
-      }
       if (SerialBT.hasClient()) {
         sendGpsUpdate(SerialBT, currentGpsData);
       }
