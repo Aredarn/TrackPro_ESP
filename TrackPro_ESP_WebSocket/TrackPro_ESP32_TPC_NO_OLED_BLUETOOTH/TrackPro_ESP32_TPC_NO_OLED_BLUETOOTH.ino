@@ -10,10 +10,13 @@ HardwareSerial mySerial(1);
 BluetoothSerial SerialBT;
 Preferences prefs;
 
-// Variables to store GPS data
-String lastTimestamp = "";
-unsigned long lastUpdateTime = 0;  // For timing updates
 uint8_t currentRateHz = 10;
+uint32_t lastFixEpoch = UINT32_MAX;  // gps.time.value() (hhmmsscc) of the last fix sent
+unsigned long lastLineSentMs = 0;
+
+// With no fresh fix for this long, send a NOFIX line so the app can tell a live link from
+// a dead one - its stall watchdog reconnects after a few seconds of silence.
+const unsigned long NO_FIX_HEARTBEAT_MS = 1500;
 
 String btCmdBuffer;
 bool btWasConnected = false;
@@ -36,36 +39,19 @@ void sendUBX(const uint8_t *msg, uint8_t len) {
   }
 }
 
-// UBX 8-bit Fletcher checksum, over Class+ID+Length+Payload only (not the sync bytes, not the checksum bytes)
-void ubxChecksum(const uint8_t *buf, size_t len, uint8_t &ckA, uint8_t &ckB) {
-  ckA = 0;
-  ckB = 0;
-  for (size_t i = 0; i < len; i++) {
-    ckA += buf[i];
-    ckB += ckA;
-  }
-}
+// Frames and sends a UBX message; the 8-bit Fletcher checksum covers class, id, length and payload
+void sendUbxMessage(uint8_t cls, uint8_t id, const uint8_t *payload, uint16_t len) {
+  const uint8_t header[4] = { cls, id, (uint8_t)(len & 0xFF), (uint8_t)(len >> 8) };
+  uint8_t ckA = 0, ckB = 0;
+  for (uint8_t b : header) { ckA += b; ckB += ckA; }
+  for (uint16_t i = 0; i < len; i++) { ckA += payload[i]; ckB += ckA; }
 
-// Fills outBuf (must be >= 14 bytes) with a UBX CFG-RATE message and returns its length
-uint8_t buildCfgRateMsg(uint16_t measRateMs, uint8_t outBuf[14]) {
-  outBuf[0] = 0xB5;
-  outBuf[1] = 0x62;
-  outBuf[2] = 0x06;  // Class: CFG
-  outBuf[3] = 0x08;  // ID: RATE
-  outBuf[4] = 0x06;  // Payload length LSB
-  outBuf[5] = 0x00;  // Payload length MSB
-  outBuf[6] = measRateMs & 0xFF;
-  outBuf[7] = (measRateMs >> 8) & 0xFF;
-  outBuf[8] = 0x01;  // navRate LSB
-  outBuf[9] = 0x00;  // navRate MSB
-  outBuf[10] = 0x01; // timeRef LSB
-  outBuf[11] = 0x00; // timeRef MSB
-
-  uint8_t ckA, ckB;
-  ubxChecksum(&outBuf[2], 10, ckA, ckB);  // Class..Payload = 10 bytes
-  outBuf[12] = ckA;
-  outBuf[13] = ckB;
-  return 14;
+  mySerial.write(0xB5);
+  mySerial.write(0x62);
+  mySerial.write(header, sizeof(header));
+  mySerial.write(payload, len);
+  mySerial.write(ckA);
+  mySerial.write(ckB);
 }
 
 bool isSupportedRateHz(uint8_t hz) {
@@ -75,11 +61,24 @@ bool isSupportedRateHz(uint8_t hz) {
 bool applyGpsRate(uint8_t hz) {
   if (!isSupportedRateHz(hz)) return false;
   uint16_t measRateMs = 1000 / hz;
-  uint8_t msg[14];
-  uint8_t len = buildCfgRateMsg(measRateMs, msg);
-  sendUBX(msg, len);
+  // UBX-CFG-RATE: measRate (ms), navRate = 1, timeRef = 1
+  const uint8_t payload[6] = { (uint8_t)(measRateMs & 0xFF), (uint8_t)(measRateMs >> 8), 0x01, 0x00, 0x01, 0x00 };
+  sendUbxMessage(0x06, 0x08, payload, sizeof(payload));
   currentRateHz = hz;
   return true;
+}
+
+// Turns off the NMEA sentences TinyGPS++ doesn't use (GLL, GSA, GSV, VTG), leaving GGA + RMC.
+// With them on, 20-25 Hz output is more than 115200 baud can carry and sentences get dropped.
+void disableUnusedNmea() {
+  const uint8_t payload[] = {
+    0x00, 0x01, 0x00, 0x00,        // UBX-CFG-VALSET: version 0, RAM layer, reserved
+    0xCA, 0x00, 0x91, 0x20, 0x00,  // CFG-MSGOUT-NMEA_ID_GLL_UART1 = 0
+    0xC0, 0x00, 0x91, 0x20, 0x00,  // CFG-MSGOUT-NMEA_ID_GSA_UART1 = 0
+    0xC5, 0x00, 0x91, 0x20, 0x00,  // CFG-MSGOUT-NMEA_ID_GSV_UART1 = 0
+    0xB1, 0x00, 0x91, 0x20, 0x00   // CFG-MSGOUT-NMEA_ID_VTG_UART1 = 0
+  };
+  sendUbxMessage(0x06, 0x8A, payload, sizeof(payload));
 }
 
 uint8_t loadPersistedRateHz() {
@@ -91,7 +90,8 @@ uint8_t loadPersistedRateHz() {
 
 void persistRateHz(uint8_t hz) {
   prefs.begin("trackpro", false);
-  prefs.putUChar("rate_hz", hz);
+  // The app re-sends RATE on every (re)connect; only write flash when the value changes
+  if (prefs.getUChar("rate_hz", 0) != hz) prefs.putUChar("rate_hz", hz);
   prefs.end();
 }
 
@@ -100,11 +100,12 @@ void setupBluetoothSPP() {
   Serial.println("Bluetooth SPP started as 'TrackPro_ESP32'");
 }
 
-void sendGpsUpdate(BluetoothSerial &out, const String &currentGpsData) {
-  out.print(currentGpsData);
-  out.print("\n");
-  out.flush();  // force immediate send, don't let it sit buffered
-  Serial.println("GPS Update Sent: " + currentGpsData);
+// No flush(): BluetoothSerial::flush() waits for the TX queue in 100 ms delay() steps, which
+// would stall the loop (and GPS serial reading) on every fix. SPP sends on its own.
+void sendLine(const String &line) {
+  SerialBT.print(line);
+  SerialBT.print("\n");
+  lastLineSentMs = millis();
 }
 
 void handleCommandLine(const String &line, BluetoothSerial &out) {
@@ -151,18 +152,20 @@ void setup() {
   mySerial.begin(9600, SERIAL_8N1, 16, 17);
   delay(2000);
 
+  // Switch the module to 115200. If it kept 115200 from before (backup power) it can't read
+  // this at 9600 and ignores it - either way both sides end up at 115200.
+  sendUBX(cfgPrt, sizeof(cfgPrt));
+  delay(1000);  // Let the module switch baud rate
+  mySerial.updateBaudRate(115200);
+  delay(100);
+
+  // Configured at 115200 so it lands whichever baud rate the module started at
+  disableUnusedNmea();
   currentRateHz = loadPersistedRateHz();
   applyGpsRate(currentRateHz);
   Serial.print("GPS update rate set to ");
   Serial.print(currentRateHz);
   Serial.println("Hz (persisted)");
-  delay(1000);
-
-  sendUBX(cfgPrt, sizeof(cfgPrt));
-  delay(1000);  // Allow time for save and reboot
-
-  mySerial.updateBaudRate(115200);
-  delay(100);  // Allow time for save and reboot
 
   setupBluetoothSPP();
 
@@ -175,46 +178,42 @@ void setup() {
 void loop() {
   pumpGpsSerial();
 
-  if (SerialBT.hasClient()) {
-    if (!btWasConnected) {
-      btCmdBuffer = "";
-      btWasConnected = true;
-      Serial.println("Bluetooth client connected");
+  if (!SerialBT.hasClient()) {
+    if (btWasConnected) {
+      btWasConnected = false;
+      Serial.println("Bluetooth client disconnected");
     }
-    pollCommands(SerialBT, btCmdBuffer);
-  } else if (btWasConnected) {
-    btWasConnected = false;
-    Serial.println("Bluetooth client disconnected");
+    return;
   }
+  if (!btWasConnected) {
+    btCmdBuffer = "";
+    btWasConnected = true;
+    Serial.println("Bluetooth client connected");
+  }
+  pollCommands(SerialBT, btCmdBuffer);
 
-  if (gps.location.isUpdated()) {
-    String currentTimestamp = String(gps.time.hour()) + ":" + String(gps.time.minute()) + ":" + String(gps.time.second()) + "." + String(gps.time.centisecond());
-
-    if (currentTimestamp != lastTimestamp && millis() - lastUpdateTime >= 100) {
-      lastUpdateTime = millis();
-      lastTimestamp = currentTimestamp;
-      String currentGpsData = createGpsJson();
-
-      if (SerialBT.hasClient()) {
-        sendGpsUpdate(SerialBT, currentGpsData);
-      }
-    }
+  // RMC and GGA each report the same fix, so dedupe on the GPS epoch time. No time-based
+  // throttle, so output follows whatever rate the module runs at.
+  if (gps.location.isUpdated() && gps.time.value() != lastFixEpoch) {
+    lastFixEpoch = gps.time.value();
+    sendLine(createGpsJson());
+  } else if (millis() - lastLineSentMs >= NO_FIX_HEARTBEAT_MS) {
+    sendLine("NOFIX");
   }
 }
 
+// Only called for a fresh fix, so "valid" is always true here. No-fix periods are sent as
+// NOFIX lines instead of JSON the app would record as a real sample.
 String createGpsJson() {
   StaticJsonDocument<200> doc;
 
-  // Report last-known values as-is instead of snapping to 0.0 on a momentary fix
-  // loss - "valid" tells the app whether to trust this fix rather than the
-  // firmware faking a jump to null island / a fake speed=0 spike.
   doc["latitude"] = gps.location.lat();
   doc["longitude"] = gps.location.lng();
   doc["altitude"] = gps.altitude.isValid() ? gps.altitude.meters() : 0.0;
   doc["speed"] = gps.speed.kmph();
   doc["satellites"] = gps.satellites.isValid() ? gps.satellites.value() : 0;
   doc["valid"] = gps.location.isValid();
-  doc["timestamp"] = createFormattedTimestamp().c_str();
+  doc["timestamp"] = createFormattedTimestamp();  // assigned as a String so it's copied, not held by pointer
 
   String jsonString;
   serializeJson(doc, jsonString);

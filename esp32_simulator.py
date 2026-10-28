@@ -2,7 +2,7 @@
 """
 TrackPro GPS simulator.
 
-Stands in for the ESP32 firmware (TrackPro_ESP32_TPC_NO_OLED.ino) over WiFi,
+Stands in for the ESP32 firmware (TrackPro_ESP32_TPC_NO_OLED_WIFI.ino) over WiFi,
 so the Android app's lap timer and drag ("dragy") features can be exercised
 without real hardware or driving. Speaks the exact same line-delimited JSON
 + RATE command protocol as the firmware: connect the app to this machine's
@@ -243,10 +243,15 @@ class DragSource:
         return lat, lon, speed, self.altitude
 
 # ---------------------------------------------------------------------------
-# Wire protocol - matches TrackPro_ESP32_TPC_NO_OLED.ino exactly
+# Wire protocol - matches the TrackPro_ESP32_TPC_NO_OLED_WIFI / _BLUETOOTH sketches
 # ---------------------------------------------------------------------------
 
-def make_json_line(lat, lon, alt, speed_kmh, satellites, valid, sim_time_s):
+# Like the firmware: once no fix has been sent for this long, send a NOFIX line
+NO_FIX_HEARTBEAT_S = 1.5
+
+
+def make_json_line(lat, lon, alt, speed_kmh, satellites, sim_time_s):
+    # The firmware only sends JSON for a fresh fix, so "valid" is always true
     h = int(sim_time_s // 3600) % 24
     m = int((sim_time_s % 3600) // 60)
     s = int(sim_time_s % 60)
@@ -257,7 +262,7 @@ def make_json_line(lat, lon, alt, speed_kmh, satellites, valid, sim_time_s):
         "altitude": round(alt, 1),
         "speed": round(speed_kmh, 2),
         "satellites": satellites,
-        "valid": valid,
+        "valid": True,
         "timestamp": f"{h}:{m}:{s}.{cc}",
     }
     return (json.dumps(payload) + "\n").encode("ascii")
@@ -295,6 +300,7 @@ def run_server(make_source, initial_hz, dropout_rate):
             recv_buf = b""
             sim_time = 0.0
             last_send = time.monotonic()
+            last_line_sent = last_send
 
             try:
                 while True:
@@ -320,9 +326,14 @@ def run_server(make_source, initial_hz, dropout_rate):
                         last_send = now
                         sim_time += dt
                         lat, lon, speed_kmh, alt = source.step(dt)
-                        valid = not (dropout_rate > 0 and random.random() < dropout_rate)
-                        satellites = random.randint(7, 12) if valid else 0
-                        conn.sendall(make_json_line(lat, lon, alt, speed_kmh, satellites, valid, sim_time))
+                        # A lost fix sends nothing, like the firmware - never a stale position
+                        if dropout_rate > 0 and random.random() < dropout_rate:
+                            if now - last_line_sent >= NO_FIX_HEARTBEAT_S:
+                                conn.sendall(b"NOFIX\n")
+                                last_line_sent = now
+                        else:
+                            conn.sendall(make_json_line(lat, lon, alt, speed_kmh, random.randint(7, 12), sim_time))
+                            last_line_sent = now
             except OSError as e:
                 print(f"Connection ended: {e}")
             finally:
@@ -337,8 +348,9 @@ def build_parser():
     common.add_argument("--hz", type=int, default=10, choices=SUPPORTED_RATES_HZ,
                          help="Initial update rate (the app can still change it live via Settings)")
     common.add_argument("--dropout-rate", type=float, default=0.0,
-                         help="Probability per update (0-1) of a simulated GPS fix loss - tests the app's "
-                              "handling of \"valid\": false without it snapping to null-island/0 speed")
+                         help="Probability per update (0-1) that the fix is lost. Like the firmware, a lost "
+                              "fix sends nothing, then NOFIX once no fix has gone out for 1.5 s - use a high "
+                              "value (e.g. 0.95) to simulate a long outage")
 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="mode", required=True)
